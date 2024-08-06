@@ -1,0 +1,74 @@
+﻿<h1>Live Video Streaming</h1>
+<button id="startLiveVideo">Start Live Video</button>
+<button id="startScreenRecording">Start Screen Recording</button>
+<button id="stopRecording">Stop Recording</button>
+<video id="video" autoplay playsinline></video>
+<script>
+    const connection = new signalR.HubConnectionBuilder().withUrl("/videoHub").build();
+
+    connection.on("ReceiveVideo", (user, videoData) => {
+        const videoElement = document.getElementById("video");
+        videoElement.src = `data:video/webm;base64,${videoData}`;
+    });
+
+    connection.start().catch(err => console.error(err.toString()));
+
+    let mediaRecorder;
+    let recordedChunks = [];
+
+    document.getElementById('startLiveVideo').addEventListener('click', async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            handleStream(stream);
+        } catch (error) {
+            console.error('Error accessing media devices.', error);
+        }
+    });
+
+    document.getElementById('startScreenRecording').addEventListener('click', async () => {
+        try {
+            const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const combinedStream = new MediaStream([...stream.getVideoTracks(), ...audioStream.getAudioTracks()]);
+            handleStream(combinedStream);
+        } catch (error) {
+            console.error('Error accessing display media.', error);
+        }
+    });
+
+    document.getElementById('stopRecording').addEventListener('click', () => {
+        if (mediaRecorder) {
+            mediaRecorder.stop();
+        }
+    });
+
+    function handleStream(stream) {
+        const videoElement = document.getElementById('video');
+        videoElement.srcObject = stream;
+
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = event => {
+            if (event.data.size > 0) {
+                recordedChunks.push(event.data);
+                const reader = new FileReader();
+                reader.readAsDataURL(event.data);
+                reader.onloadend = () => {
+                    const base64data = reader.result.split(',')[1];
+                    connection.invoke("SendVideo", "User", base64data).catch(err => console.error(err.toString()));
+                };
+            }
+        };
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = 'recording.webm';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+        };
+        mediaRecorder.start(1000); // Send video data every second
+    }
+</script>
